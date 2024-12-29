@@ -1,5 +1,10 @@
 package org.example;
 
+/*
+https://www.winpcap.org/windump/install/
+https://www.winpcap.org/install/
+ */
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.sql.*;
@@ -45,18 +50,16 @@ public class TrafficMonitoringApp {
         System.out.println("Starting traffic monitoring...");
         try {
             ProcessBuilder builder = new ProcessBuilder(
-                    "windump.exe", "-i", "1", "port", "8080"
+                    "C:\\Users\\Alexander\\Downloads\\WinDump.exe", "-i", "1", "port", "8080"
             );
+
 
             Process process = builder.start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
             String line;
             while ((line = reader.readLine()) != null) {
-                String ip = extractIP(line);
-                if (ip != null && isSuspicious(ip)) {
-                    saveSuspiciousIPToDatabase(ip);
-                }
+                System.out.println("Captured packet: " + line);
             }
         } catch (Exception e) {
             System.out.println("Error during monitoring: " + e.getMessage());
