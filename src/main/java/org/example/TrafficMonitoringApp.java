@@ -1,20 +1,19 @@
 package org.example;
 
-/*
-https://www.winpcap.org/windump/install/
-https://www.winpcap.org/install/
- */
-
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.sql.*;
-import java.util.Scanner;
+import java.util.*;
 
 public class TrafficMonitoringApp {
 
     private static final String DB_URL = "jdbc:mariadb://localhost:3306/traffic_monitoring";
     private static final String DB_USER = "root";
     private static final String DB_PASSWORD = "ImM3dv3d";
+
+    private static final Map<String, List<Long>> trafficData = new HashMap<>(); // IP -> List of timestamps
+    private static final int WINDOW_SIZE = 10; // Количество последних запросов для расчёта среднего
+    private static final double BOLLINGER_FACTOR = 2.0; // Коэффициент для определения волатильности
 
     public static void main(String[] args) {
         createDatabaseIfNotExists();
@@ -53,13 +52,18 @@ public class TrafficMonitoringApp {
                     "C:\\Users\\Alexander\\Downloads\\WinDump.exe", "-i", "1", "port", "8080"
             );
 
-
             Process process = builder.start();
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
 
             String line;
+
             while ((line = reader.readLine()) != null) {
+
                 System.out.println("Captured packet: " + line);
+                String ip = extractIP(line);
+                if (ip != null) {
+                    analyzeTraffic(ip);
+                }
             }
         } catch (Exception e) {
             System.out.println("Error during monitoring: " + e.getMessage());
@@ -67,8 +71,47 @@ public class TrafficMonitoringApp {
         }
     }
 
+    private static void analyzeTraffic(String ip) {
+        long currentTime = System.currentTimeMillis();
+
+        // Добавляем текущую метку времени для IP
+        trafficData.putIfAbsent(ip, new ArrayList<>());
+        List<Long> timestamps = trafficData.get(ip);
+        timestamps.add(currentTime);
+
+        // Удаляем старые метки времени
+        timestamps.removeIf(timestamp -> currentTime - timestamp > 60000); // Последняя минута
+
+        if (timestamps.size() > WINDOW_SIZE) {
+            double average = calculateAverage(timestamps);
+            double stdDev = calculateStandardDeviation(timestamps, average);
+
+            double upperBand = average + BOLLINGER_FACTOR * stdDev;
+            double lowerBand = average - BOLLINGER_FACTOR * stdDev;
+
+            System.out.printf("IP: %s, Average: %.2f, StdDev: %.2f, Upper: %.2f, Lower: %.2f\n",
+                    ip, average, stdDev, upperBand, lowerBand);
+
+            if (timestamps.size() > upperBand) {
+                System.out.println("Suspicious traffic detected for IP: " + ip);
+                saveSuspiciousIPToDatabase(ip);
+            }
+        }
+    }
+
+    private static double calculateAverage(List<Long> timestamps) {
+        return timestamps.stream().mapToLong(Long::longValue).average().orElse(0.0);
+    }
+
+    private static double calculateStandardDeviation(List<Long> timestamps, double average) {
+        double variance = timestamps.stream()
+                .mapToDouble(timestamp -> Math.pow(timestamp - average, 2))
+                .average()
+                .orElse(0.0);
+        return Math.sqrt(variance);
+    }
+
     private static String extractIP(String packet) {
-        // Простая логика для извлечения IP-адреса из строки
         String[] parts = packet.split(" ");
         for (String part : parts) {
             if (part.matches("\\d+\\.\\d+\\.\\d+\\.\\d+")) {
@@ -76,11 +119,6 @@ public class TrafficMonitoringApp {
             }
         }
         return null;
-    }
-
-    private static boolean isSuspicious(String ip) {
-        // Заглушка для проверки подозрительности IP-адреса
-        return ip.startsWith("192.168"); // Пример: все локальные адреса считаются подозрительными
     }
 
     private static void saveSuspiciousIPToDatabase(String ip) {
